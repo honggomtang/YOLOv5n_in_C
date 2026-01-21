@@ -51,6 +51,36 @@ python export_yolov5_weights_to_h.py --pt yolov5n.pt --out weights_weight_only.h
 python export_yolov5_weights_to_h.py --pt yolov5n.pt --out weights_bias_only.h --only ".bias"
 ```
 
+## 3.5) Conv2D부터 검증(추천 루트)
+
+YOLOv5n 첫 블록은 `Conv2d + BN + SiLU`야.
+
+- conv0: `Conv2d(3 -> 16, k=6, s=2, p=2, bias=False)`
+- bn0: `BatchNorm2d(16, eps=1e-3)`
+- act0: `SiLU`
+
+### A. 파이썬에서 테스트 벡터 뽑기
+
+```bash
+cd /Users/kinghong/Desktop/yolov5n
+source .venv/bin/activate
+python gen_conv0_test_vectors.py --pt yolov5n.pt --out test_vectors_conv0.h --h 64 --w 64
+```
+
+### B. C 레퍼런스 구현으로 비교하기(PC에서 먼저)
+
+`test_conv0.c`는 `weights.h`(모델 파라미터) + `test_vectors_conv0.h`(입력/정답)로
+conv0를 돌리고 `max_abs_diff`를 출력해.
+
+예시(맥/리눅스):
+
+```bash
+cc -O2 -std=c11 test_conv0.c conv2d_ref.c bn_silu_ref.c -lm -o test_conv0
+./test_conv0
+```
+
+여기서 `OK` 뜨면, 그 다음부터 MicroBlaze로 포팅하면 돼.
+
 ## 4) 출력 형식(헤더 안에 뭐가 들어가나)
 
 각 파라미터 키(예: `model.0.conv.weight`)는 C 식별자로 변환되어:
