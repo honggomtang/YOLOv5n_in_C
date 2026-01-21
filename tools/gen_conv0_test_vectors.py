@@ -11,8 +11,8 @@ from pathlib import Path
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pt", default="yolov5n.pt")
-    ap.add_argument("--out", default="test_vectors_conv0.h")
+    ap.add_argument("--pt", default="assets/yolov5n.pt")
+    ap.add_argument("--out", default="tests/test_vectors_conv0.h")
     ap.add_argument("--h", type=int, default=64)
     ap.add_argument("--w", type=int, default=64)
     ap.add_argument("--seed", type=int, default=0)

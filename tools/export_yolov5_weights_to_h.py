@@ -114,7 +114,7 @@ def _tensor_to_c_array(t, dtype: str) -> Tuple[str, str, int]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pt", required=True, help="Path to yolov5n.pt (or any PyTorch .pt checkpoint)")
-    ap.add_argument("--out", default="weights.h", help="Output header path (default: weights.h)")
+    ap.add_argument("--out", default="assets/weights.h", help="Output header path (default: assets/weights.h)")
     ap.add_argument(
         "--only",
         default="",

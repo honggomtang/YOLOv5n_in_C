@@ -1,14 +1,19 @@
 
-# YOLOv5n `.pt` → C Header (`weights.h`) Exporter
+# YOLOv5n `.pt` → C Header + C 레퍼런스(Conv0) 검증
 
 전기전자공학부/임베디드(특히 MicroBlaze V / Vitis) 환경에서 쓰기 쉽도록,
 PyTorch 모델 파일(`yolov5n.pt`)의 **가중치(Weights) / 편향(Bias)** 등을 뽑아서
 `weights.h` 형태의 C 헤더로 내보내는 도구입니다.
 
-## 1) 준비물
+## 1) 폴더 구조(이렇게 씀)
 
-- `yolov5n.pt` 파일을 이 폴더에 넣기
-  - 예: `/Users/kinghong/Desktop/yolov5n/yolov5n.pt`
+- **`assets/`**: 모델/가중치 같은 큰 파일
+- **`tools/`**: 파이썬 유틸
+- **`cinclude/`**: C 헤더
+- **`csrc/`**: C 소스
+- **`tests/`**: 테스트 벡터/테스트 실행파일
+
+- `assets/yolov5n.pt` 준비
 - Python 3 설치 (macOS 기본 `python3` 권장)
 
 ## 2) 파이썬 환경 설치(처음 1회)
@@ -32,7 +37,7 @@ python -m pip install torch numpy
 ```bash
 cd /Users/kinghong/Desktop/yolov5n
 source .venv/bin/activate
-python export_yolov5_weights_to_h.py --pt yolov5n.pt --out weights.h
+python tools/export_yolov5_weights_to_h.py --pt assets/yolov5n.pt --out assets/weights.h
 ```
 
 ### B. weight만(또는 bias만) 뽑고 싶을 때 (추천)
@@ -42,13 +47,13 @@ python export_yolov5_weights_to_h.py --pt yolov5n.pt --out weights.h
 - weight만:
 
 ```bash
-python export_yolov5_weights_to_h.py --pt yolov5n.pt --out weights_weight_only.h --only ".weight"
+python tools/export_yolov5_weights_to_h.py --pt assets/yolov5n.pt --out assets/weights_weight_only.h --only ".weight"
 ```
 
 - bias만:
 
 ```bash
-python export_yolov5_weights_to_h.py --pt yolov5n.pt --out weights_bias_only.h --only ".bias"
+python tools/export_yolov5_weights_to_h.py --pt assets/yolov5n.pt --out assets/weights_bias_only.h --only ".bias"
 ```
 
 ## 3.5) Conv2D부터 검증(추천 루트)
@@ -64,7 +69,7 @@ YOLOv5n 첫 블록은 `Conv2d + BN + SiLU`야.
 ```bash
 cd /Users/kinghong/Desktop/yolov5n
 source .venv/bin/activate
-python gen_conv0_test_vectors.py --pt yolov5n.pt --out test_vectors_conv0.h --h 64 --w 64
+python tools/gen_conv0_test_vectors.py --pt assets/yolov5n.pt --out tests/test_vectors_conv0.h --h 64 --w 64
 ```
 
 ### B. C 레퍼런스 구현으로 비교하기(PC에서 먼저)
@@ -75,8 +80,8 @@ conv0를 돌리고 `max_abs_diff`를 출력해.
 예시(맥/리눅스):
 
 ```bash
-cc -O2 -std=c11 test_conv0.c conv2d_ref.c bn_silu_ref.c -lm -o test_conv0
-./test_conv0
+cc -O2 -std=c11 csrc/test_conv0.c csrc/conv2d_ref.c csrc/bn_silu_ref.c -Icinclude -Iassets -Itests -lm -o tests/test_conv0
+./tests/test_conv0
 ```
 
 여기서 `OK` 뜨면, 그 다음부터 MicroBlaze로 포팅하면 돼.
@@ -102,5 +107,4 @@ cc -O2 -std=c11 test_conv0.c conv2d_ref.c bn_silu_ref.c -lm -o test_conv0
   같은 방향으로 확장하면 됩니다.
 
 
-# YOLOv5n_in_C
->>>>>>> 83d1ace09113e5e7e9316a7fc2940ce041cca3da
+
