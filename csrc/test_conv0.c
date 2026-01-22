@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <math.h>
 
-#include "weights.h"
-#include "test_vectors_conv0.h"
+#include "../assets/weights.h"
+#include "../tests/test_vectors_conv0.h"
 
-#include "conv2d_ref.h"
-#include "bn_silu_ref.h"
+#include "operations/conv2d.h"
+#include "operations/bn_silu.h"
 
 static float max_abs_diff(const float* a, const float* b, int n) {
     float m = 0.0f;
@@ -33,7 +33,7 @@ int main(void) {
     static float y_conv[1 * 16 * TV_Y_H * TV_Y_W];
     static float y_out[1 * 16 * TV_Y_H * TV_Y_W];
 
-    conv2d_nchw_ref_f32(
+    conv2d_nchw_f32(
         tv_x, n, c_in, h_in, w_in,
         model_0_conv_weight, c_out, k, k,
         0,
