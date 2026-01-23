@@ -17,18 +17,23 @@ void c3_nchw_f32(
     const float* cv3_gamma, const float* cv3_beta,
     const float* cv3_mean, const float* cv3_var,
     int32_t n_bottleneck,
-    const float* bottleneck_cv1_w, const float* bottleneck_cv1_gamma,
-    const float* bottleneck_cv1_beta, const float* bottleneck_cv1_mean,
-    const float* bottleneck_cv1_var,
-    const float* bottleneck_cv2_w, const float* bottleneck_cv2_gamma,
-    const float* bottleneck_cv2_beta, const float* bottleneck_cv2_mean,
-    const float* bottleneck_cv2_var,
+    const float* const* bottleneck_cv1_w,
+    const float* const* bottleneck_cv1_gamma,
+    const float* const* bottleneck_cv1_beta,
+    const float* const* bottleneck_cv1_mean,
+    const float* const* bottleneck_cv1_var,
+    const float* const* bottleneck_cv2_w,
+    const float* const* bottleneck_cv2_gamma,
+    const float* const* bottleneck_cv2_beta,
+    const float* const* bottleneck_cv2_mean,
+    const float* const* bottleneck_cv2_var,
     float eps,
     float* y)
 {
     static float cv1_out[1024 * 1024];
     static float cv2_out[1024 * 1024];
     static float bottleneck_out[1024 * 1024];
+    static float bottleneck_tmp[1024 * 1024];
     static float concat_out[1024 * 1024];
     
     // cv1 경로: x → cv1 → bottleneck n회
@@ -41,19 +46,26 @@ void c3_nchw_f32(
                      cv1_out);
     
     // bottleneck n회 반복
+    // 주의: bottleneck은 residual에서 x를 다시 읽으니까, in-place(x==y) 하면 망가져
+    const float* bn_in = cv1_out;
+    float* bn_out = bottleneck_out;
     for (int32_t i = 0; i < n_bottleneck; i++) {
-        // TODO: bottleneck 파라미터 접근 방식 수정 필요
+        // ping-pong
+        bn_out = (i % 2 == 0) ? bottleneck_out : bottleneck_tmp;
+
         bottleneck_nchw_f32(
-            (i == 0) ? cv1_out : bottleneck_out,
+            bn_in,
             n, cv1_c_out, h, w,
-            bottleneck_cv1_w, cv1_c_out,
-            bottleneck_cv1_gamma, bottleneck_cv1_beta,
-            bottleneck_cv1_mean, bottleneck_cv1_var,
-            bottleneck_cv2_w, cv1_c_out,
-            bottleneck_cv2_gamma, bottleneck_cv2_beta,
-            bottleneck_cv2_mean, bottleneck_cv2_var,
+            bottleneck_cv1_w[i], cv1_c_out,
+            bottleneck_cv1_gamma[i], bottleneck_cv1_beta[i],
+            bottleneck_cv1_mean[i], bottleneck_cv1_var[i],
+            bottleneck_cv2_w[i], cv1_c_out,
+            bottleneck_cv2_gamma[i], bottleneck_cv2_beta[i],
+            bottleneck_cv2_mean[i], bottleneck_cv2_var[i],
             eps,
-            bottleneck_out);
+            bn_out);
+
+        bn_in = bn_out;
     }
     
     // cv2 경로 (skip): x → cv2
@@ -68,7 +80,7 @@ void c3_nchw_f32(
     // concat([bottleneck_out, cv2_out])
     // PyTorch: torch.cat([bottleneck_out, cv2_out], 1)
     // 순서: bottleneck_out 먼저, cv2_out 나중
-    concat_nchw_f32(bottleneck_out, cv1_c_out,  // x1: bottleneck_out (cv1_c_out 채널)
+    concat_nchw_f32(bn_out, cv1_c_out,  // x1: bottleneck_out (cv1_c_out 채널)
                     cv2_out, cv2_c_out,         // x2: cv2_out (cv2_c_out 채널)
                     n, h, w,
                     concat_out);
