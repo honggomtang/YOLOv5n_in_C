@@ -3,12 +3,21 @@
 
 #include <stdint.h>
 
-// Detection 결과 구조체
+// Detection 결과 구조체 (내부 처리용, float)
 typedef struct {
     float x, y, w, h;   // 중심 좌표 및 크기 (normalized)
     float conf;         // confidence score
     int32_t cls_id;     // class ID
 } detection_t;
+
+// HW 출력용 구조체 (8 bytes, 고정 크기)
+// 실제 FPGA에서 호스트로 전송하는 형식
+typedef struct __attribute__((packed)) {
+    uint16_t x, y, w, h;   // 픽셀 좌표 (정수, 0~65535)
+    uint8_t  class_id;     // 클래스 ID (0~79)
+    uint8_t  confidence;   // 신뢰도 (0~255, conf*255)
+    uint8_t  reserved[2];  // 8바이트 정렬용
+} hw_detection_t;
 
 /**
  * Classic YOLOv5n Anchor-based Decode

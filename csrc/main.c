@@ -280,19 +280,30 @@ int main(int argc, char* argv[]) {
 
     printf("After NMS: %d detections\n", num_nms);
 
-    // 결과 저장
-    FILE* f = fopen("data/output/detections.txt", "w");
+    // HW 출력용 바이너리 파일로 저장
+    FILE* f = fopen("data/output/detections.bin", "wb");
     if (f) {
-        fprintf(f, "# YOLOv5n Detection Results\n");
-        fprintf(f, "# Detections: %d\n", num_nms);
-        fprintf(f, "# Format: class_id confidence x y w h\n\n");
-        for (int i = 0; i < num_nms; i++) {
-            fprintf(f, "%d %.6f %.6f %.6f %.6f %.6f\n",
-                nms_dets[i].cls_id, nms_dets[i].conf,
-                nms_dets[i].x, nms_dets[i].y, nms_dets[i].w, nms_dets[i].h);
+        // 1. detection 개수 (1 byte)
+        uint8_t count = (uint8_t)(num_nms > 255 ? 255 : num_nms);
+        fwrite(&count, sizeof(uint8_t), 1, f);
+        
+        // 2. 각 detection을 hw_detection_t 형식으로 변환하여 저장
+        for (int i = 0; i < count; i++) {
+            hw_detection_t hw;
+            // normalized (0~1) → 픽셀 좌표 (0~INPUT_SIZE)
+            hw.x = (uint16_t)(nms_dets[i].x * INPUT_SIZE);
+            hw.y = (uint16_t)(nms_dets[i].y * INPUT_SIZE);
+            hw.w = (uint16_t)(nms_dets[i].w * INPUT_SIZE);
+            hw.h = (uint16_t)(nms_dets[i].h * INPUT_SIZE);
+            hw.class_id = (uint8_t)nms_dets[i].cls_id;
+            hw.confidence = (uint8_t)(nms_dets[i].conf * 255);
+            hw.reserved[0] = 0;
+            hw.reserved[1] = 0;
+            fwrite(&hw, sizeof(hw_detection_t), 1, f);
         }
         fclose(f);
-        printf("Saved to data/output/detections.txt\n");
+        printf("Saved to data/output/detections.bin (%d bytes)\n", 
+               1 + count * (int)sizeof(hw_detection_t));
     }
 
     // Cleanup

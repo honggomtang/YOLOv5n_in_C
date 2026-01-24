@@ -1,7 +1,7 @@
-# YOLOv5n Detection Results
+# C Detection Results
 # Detections: 3
-# Format: class_id confidence x y w h
+# Format: class_id class_name confidence x y w h
 
-0 0.904610 0.740620 0.515294 0.308028 0.511584
-0 0.659625 0.338334 0.570972 0.464188 0.409941
-27 0.599798 0.371467 0.661167 0.053645 0.226830
+0 person          0.8000  474  328  205  337
+0 person          0.3882  218  365  303  268
+27 tie             0.2667  235  426   32  138

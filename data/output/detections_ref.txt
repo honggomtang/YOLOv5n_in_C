@@ -1,8 +1,0 @@
-# YOLOv5n Detection Results (Python Reference - Fused)
-# Input: zidane.jpg
-# Total detections: 3
-# Format: class_id confidence x y w h (normalized, 640x640)
-
-0 0.904610 0.740620 0.515294 0.308028 0.511584
-0 0.659624 0.338334 0.570972 0.464188 0.409941
-27 0.599799 0.371467 0.661167 0.053645 0.226830

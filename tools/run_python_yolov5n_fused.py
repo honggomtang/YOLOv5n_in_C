@@ -1,8 +1,11 @@
 """
-Fused 모델로 detections_ref.txt 생성 (로컬 yolov5 레포 사용)
+Fused 모델로 detections_ref.bin 생성 (로컬 yolov5 레포 사용)
+
+C 코드와 동일한 HW 출력 포맷 (바이너리)
 """
 
 import sys
+import struct
 from pathlib import Path
 
 # 로컬 yolov5 레포 사용
@@ -16,7 +19,7 @@ from PIL import Image
 YOLOV5N_ROOT = Path(__file__).resolve().parents[1]
 IMG_PATH = YOLOV5N_ROOT / "data" / "image" / "zidane.jpg"
 WEIGHTS_PATH = YOLOV5N_ROOT / "assets" / "yolov5n.pt"
-OUT_PATH = YOLOV5N_ROOT / "data" / "output" / "detections_ref.txt"
+OUT_BIN_PATH = YOLOV5N_ROOT / "data" / "output" / "ref" / "detections.bin"
 
 CONF_THRES = 0.25
 IOU_THRES = 0.45
@@ -70,31 +73,43 @@ def main():
     rows = []
     for pred in preds:
         x1, y1, x2, y2, conf, cls_id = pred
-        cx = (x1 + x2) / 2.0 / 640.0
-        cy = (y1 + y2) / 2.0 / 640.0
-        w = (x2 - x1) / 640.0
-        h = (y2 - y1) / 640.0
+        # xyxy → xywh (픽셀 좌표)
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        w = (x2 - x1)
+        h = (y2 - y1)
         rows.append((int(cls_id), conf, cx, cy, w, h))
     
     rows.sort(key=lambda r: r[1], reverse=True)
     
-    # 저장
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUT_PATH.open("w") as f:
-        f.write("# YOLOv5n Detection Results (Python Reference - Fused)\n")
-        f.write(f"# Input: {IMG_PATH.name}\n")
-        f.write(f"# Total detections: {len(rows)}\n")
-        f.write("# Format: class_id confidence x y w h (normalized, 640x640)\n\n")
-        for cls_id, conf, x, y, w, h in rows:
-            f.write(f"{cls_id} {conf:.6f} {x:.6f} {y:.6f} {w:.6f} {h:.6f}\n")
+    # HW 출력용 바이너리 파일로 저장
+    OUT_BIN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with OUT_BIN_PATH.open("wb") as f:
+        # 1. detection 개수 (1 byte)
+        count = min(len(rows), 255)
+        f.write(struct.pack('B', count))
+        
+        # 2. 각 detection을 hw_detection_t 형식으로 저장
+        # struct: uint16 x, y, w, h (8 bytes) + uint8 class_id, confidence, reserved[2] (4 bytes) = 12 bytes
+        for i in range(count):
+            cls_id, conf, cx, cy, w, h = rows[i]
+            hw_x = int(cx)
+            hw_y = int(cy)
+            hw_w = int(w)
+            hw_h = int(h)
+            hw_conf = int(conf * 255)
+            # pack: H=uint16, B=uint8, little-endian, 12 bytes total
+            f.write(struct.pack('<HHHHBBBB', 
+                                hw_x, hw_y, hw_w, hw_h, 
+                                cls_id, hw_conf, 0, 0))
     
     print(f"\nTotal detections: {len(rows)}")
-    print(f"Saved to: {OUT_PATH}")
+    print(f"Saved to: {OUT_BIN_PATH} ({1 + count * 12} bytes)")
     
     if rows:
         print("\nTop 5 detections:")
-        for i, (cls_id, conf, x, y, w, h) in enumerate(rows[:5]):
-            print(f"  {i+1}. class={cls_id}, conf={conf:.4f}")
+        for i, (cls_id, conf, cx, cy, w, h) in enumerate(rows[:5]):
+            print(f"  {i+1}. class={cls_id}, conf={conf:.4f}, pos=({cx:.0f},{cy:.0f})")
 
 
 if __name__ == "__main__":

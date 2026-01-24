@@ -11,7 +11,7 @@
 - Bare-metal / 임베디드 환경 타겟
 - 순수 C 언어만 사용
 
-**현재 상태**: Python YOLOv5n (Fused)과 동일한 추론 결과 출력 완료
+**현재 상태**: Python YOLOv5n과 100% 동일한 추론 결과 출력 완료
 
 ---
 
@@ -87,7 +87,7 @@ yolov5n/
 │   │   ├── c3.c/h            # C3 블록 (cv1 + cv2 + Bottleneck + cv3)
 │   │   ├── sppf.c/h          # SPPF 블록 (Spatial Pyramid Pooling Fast)
 │   │   ├── detect.c/h        # Detect Head (1×1 Conv × 3 스케일)
-│   │   ├── decode.c/h        # Anchor-based Decode + detection_t 정의
+│   │   ├── decode.c/h        # Anchor-based Decode + hw_detection_t 정의
 │   │   └── nms.c/h           # Non-Maximum Suppression
 │   │
 │   ├── operations/            # 저수준 연산
@@ -108,18 +108,46 @@ yolov5n/
 │   ├── input/                 # 전처리된 입력
 │   │   └── preprocessed_image.bin
 │   └── output/                # 추론 결과
-│       ├── detections.txt     # C 코드 출력
-│       └── detections_ref.txt # Python 참조 출력
+│       ├── detections.bin     # C 결과 (HW 바이너리 포맷)
+│       ├── detections.txt     # C 결과 (텍스트)
+│       ├── detections.jpg     # C 결과 시각화
+│       └── ref/               # Python 참조 결과
+│           ├── detections.bin
+│           ├── detections.txt
+│           └── detections.jpg
 │
 ├── tools/                     # Python 도구
 │   ├── export_weights_to_bin.py    # PyTorch → weights.bin 변환
 │   ├── preprocess_image_to_bin.py  # 이미지 전처리
 │   ├── run_python_yolov5n_fused.py # Python 참조 출력 생성
-│   └── gen_*.py                    # 테스트 벡터 생성
+│   ├── decode_detections.py        # bin → txt 변환 + 시각화
+│   └── gen_test_vectors.py         # 테스트 벡터 생성
 │
 └── tests/                     # 단위 테스트
     ├── test_*.c               # 각 블록별 테스트
     └── test_vectors_*.h       # 테스트 벡터
+```
+
+---
+
+## HW 출력 포맷
+
+FPGA에서 호스트로 전송하는 **바이너리 포맷** (detections.bin):
+
+```c
+// 12 bytes per detection
+typedef struct __attribute__((packed)) {
+    uint16_t x, y, w, h;   // 픽셀 좌표 (중심점, 크기)
+    uint8_t  class_id;     // 클래스 ID (0~79)
+    uint8_t  confidence;   // 신뢰도 (0~255, conf*255)
+    uint8_t  reserved[2];  // 정렬용
+} hw_detection_t;
+
+// 파일 구조:
+// [1 byte]   num_detections (최대 255)
+// [12 bytes] detection[0]
+// [12 bytes] detection[1]
+// ...
 ```
 
 ---
@@ -199,9 +227,9 @@ Image: 640x640
 Weights: 121 tensors
 
 Running inference...
-Decoded: 31 detections
+Decoded: 19 detections
 After NMS: 3 detections
-Saved to data/output/detections.txt
+Saved to data/output/detections.bin (37 bytes)
 ```
 
 ---
@@ -211,15 +239,17 @@ Saved to data/output/detections.txt
 ### 1. 가중치 준비
 
 ```bash
-# PyTorch 모델 → Fused weights.bin 변환
-python tools/export_weights_to_bin.py --classic
+cd /path/to/yolov5
+source .venv/bin/activate
+python /path/to/yolov5n/tools/export_weights_to_bin.py --classic
 ```
 
 ### 2. 이미지 전처리
 
 ```bash
-# 이미지 → 640×640 정규화된 바이너리
-python tools/preprocess_image_to_bin.py
+python tools/preprocess_image_to_bin.py \
+    --img data/image/zidane.jpg \
+    --out data/input/preprocessed_image.bin
 ```
 
 입력 이미지 처리:
@@ -229,31 +259,47 @@ python tools/preprocess_image_to_bin.py
 4. 0-1 정규화
 5. NCHW 형식으로 저장
 
-### 3. 추론 실행
+### 3. C 추론 실행
 
 ```bash
 ./main
+# 출력: data/output/detections.bin
 ```
 
-### 4. 결과 확인
-
-`data/output/detections.txt`:
-```
-# YOLOv5n Detection Results
-# Detections: 3
-# Format: class_id confidence x y w h
-
-0 0.904610 0.740620 0.515294 0.308028 0.511584
-0 0.659625 0.338334 0.570972 0.464188 0.409941
-27 0.599798 0.371467 0.661167 0.053645 0.226830
-```
-
-### 5. Python 참조와 비교 (선택)
+### 4. Python 참조 생성 (선택)
 
 ```bash
 cd /path/to/yolov5
 source .venv/bin/activate
 python /path/to/yolov5n/tools/run_python_yolov5n_fused.py
+# 출력: data/output/ref/detections.bin
+```
+
+### 5. 결과 디코딩 및 시각화
+
+```bash
+# C 결과만
+python tools/decode_detections.py
+
+# Python 참조만
+python tools/decode_detections.py --ref
+
+# 둘 다 비교
+python tools/decode_detections.py --compare
+```
+
+출력 예시:
+```
+=== Comparison ===
+C detections:   3
+Ref detections: 3
+
+Top detections comparison:
+C Result                                 | Python Reference                        
+-------------------------------------------------------------------------------------
+person 0.800 (474,328)                   | person 0.800 (474,328)                  
+person 0.388 (218,365)                   | person 0.388 (218,365)                  
+tie 0.267 (235,426)                      | tie 0.267 (235,426)                     
 ```
 
 ---
@@ -326,6 +372,7 @@ gcc -o tests/test_conv tests/test_conv.c csrc/blocks/conv.c csrc/operations/conv
 
 ## 참고 사항
 
-- **정밀도**: Python Fused 모델과 소수점 6자리까지 일치
+- **정밀도**: Python YOLOv5n과 100% 동일한 결과
+- **출력 포맷**: HW 친화적인 바이너리 (12 bytes/detection)
 - **메모리**: 동적 할당 사용 (malloc/free)
 - **플랫폼**: macOS/Linux에서 테스트됨, FPGA 포팅 예정
