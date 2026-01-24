@@ -1,96 +1,66 @@
 #include "c3.h"
 #include "../operations/conv2d.h"
-#include "../operations/bn_silu.h"
+#include "../operations/silu.h"
 #include "../operations/bottleneck.h"
 #include "../operations/concat.h"
 
-// C3 블록: Cross-stage partial bottleneck
+void c3_set_debug_layer(int layer) { (void)layer; }  // 미사용
+
+// Helper: 1x1 Fused Conv
+static void conv1x1(
+    const float* x, int32_t n, int32_t c_in, int32_t h, int32_t w,
+    const float* w_ptr, int32_t c_out, const float* bias,
+    float* y)
+{
+    conv2d_nchw_f32(x, n, c_in, h, w,
+                    w_ptr, c_out, 1, 1,
+                    bias, 1, 1, 0, 0, 1,
+                    y, h, w);
+    silu_nchw_f32(y, n, c_out, h, w, y);
+}
+
 void c3_nchw_f32(
     const float* x, int32_t n, int32_t c_in, int32_t h, int32_t w,
-    const float* cv1_w, int32_t cv1_c_out,
-    const float* cv1_gamma, const float* cv1_beta,
-    const float* cv1_mean, const float* cv1_var,
-    const float* cv2_w, int32_t cv2_c_out,
-    const float* cv2_gamma, const float* cv2_beta,
-    const float* cv2_mean, const float* cv2_var,
-    const float* cv3_w, int32_t cv3_c_out,
-    const float* cv3_gamma, const float* cv3_beta,
-    const float* cv3_mean, const float* cv3_var,
+    const float* cv1_w, int32_t cv1_c_out, const float* cv1_bias,
+    const float* cv2_w, int32_t cv2_c_out, const float* cv2_bias,
+    const float* cv3_w, int32_t cv3_c_out, const float* cv3_bias,
     int32_t n_bottleneck,
-    const float* const* bottleneck_cv1_w,
-    const float* const* bottleneck_cv1_gamma,
-    const float* const* bottleneck_cv1_beta,
-    const float* const* bottleneck_cv1_mean,
-    const float* const* bottleneck_cv1_var,
-    const float* const* bottleneck_cv2_w,
-    const float* const* bottleneck_cv2_gamma,
-    const float* const* bottleneck_cv2_beta,
-    const float* const* bottleneck_cv2_mean,
-    const float* const* bottleneck_cv2_var,
-    float eps,
+    const float* const* bn_cv1_w, const float* const* bn_cv1_bias,
+    const float* const* bn_cv2_w, const float* const* bn_cv2_bias,
+    int32_t shortcut,
     float* y)
 {
     static float cv1_out[1024 * 1024];
     static float cv2_out[1024 * 1024];
     static float bottleneck_out[1024 * 1024];
     static float bottleneck_tmp[1024 * 1024];
-    static float concat_out[1024 * 1024];
+    static float concat_out[2 * 1024 * 1024];
     
-    // cv1 경로: x → cv1 → bottleneck n회
-    conv2d_nchw_f32(x, n, c_in, h, w,
-                    cv1_w, cv1_c_out, 1, 1,
-                    0, 1, 1, 0, 0, 1,
-                    cv1_out, h, w);
-    bn_silu_nchw_f32(cv1_out, n, cv1_c_out, h, w,
-                     cv1_gamma, cv1_beta, cv1_mean, cv1_var, eps,
-                     cv1_out);
+    // cv1
+    conv1x1(x, n, c_in, h, w, cv1_w, cv1_c_out, cv1_bias, cv1_out);
     
-    // bottleneck n회 반복
-    // 주의: bottleneck은 residual에서 x를 다시 읽으니까, in-place(x==y) 하면 망가져
+    // cv2 (skip path)
+    conv1x1(x, n, c_in, h, w, cv2_w, cv2_c_out, cv2_bias, cv2_out);
+    
+    // Bottleneck n회
     const float* bn_in = cv1_out;
     float* bn_out = bottleneck_out;
     for (int32_t i = 0; i < n_bottleneck; i++) {
-        // ping-pong
         bn_out = (i % 2 == 0) ? bottleneck_out : bottleneck_tmp;
-
+        
         bottleneck_nchw_f32(
-            bn_in,
-            n, cv1_c_out, h, w,
-            bottleneck_cv1_w[i], cv1_c_out,
-            bottleneck_cv1_gamma[i], bottleneck_cv1_beta[i],
-            bottleneck_cv1_mean[i], bottleneck_cv1_var[i],
-            bottleneck_cv2_w[i], cv1_c_out,
-            bottleneck_cv2_gamma[i], bottleneck_cv2_beta[i],
-            bottleneck_cv2_mean[i], bottleneck_cv2_var[i],
-            eps,
+            bn_in, n, cv1_c_out, h, w,
+            bn_cv1_w[i], cv1_c_out, bn_cv1_bias[i],
+            bn_cv2_w[i], cv1_c_out, bn_cv2_bias[i],
+            shortcut,
             bn_out);
-
+        
         bn_in = bn_out;
     }
     
-    // cv2 경로 (skip): x → cv2
-    conv2d_nchw_f32(x, n, c_in, h, w,
-                    cv2_w, cv2_c_out, 1, 1,
-                    0, 1, 1, 0, 0, 1,
-                    cv2_out, h, w);
-    bn_silu_nchw_f32(cv2_out, n, cv2_c_out, h, w,
-                     cv2_gamma, cv2_beta, cv2_mean, cv2_var, eps,
-                     cv2_out);
+    // Concat
+    concat_nchw_f32(bn_out, cv1_c_out, cv2_out, cv2_c_out, n, h, w, concat_out);
     
-    // concat([bottleneck_out, cv2_out])
-    // PyTorch: torch.cat([bottleneck_out, cv2_out], 1)
-    // 순서: bottleneck_out 먼저, cv2_out 나중
-    concat_nchw_f32(bn_out, cv1_c_out,  // x1: bottleneck_out (cv1_c_out 채널)
-                    cv2_out, cv2_c_out,         // x2: cv2_out (cv2_c_out 채널)
-                    n, h, w,
-                    concat_out);
-    
-    // cv3: Conv(1×1) + BN + SiLU
-    conv2d_nchw_f32(concat_out, n, cv1_c_out + cv2_c_out, h, w,
-                    cv3_w, cv3_c_out, 1, 1,
-                    0, 1, 1, 0, 0, 1,
-                    y, h, w);
-    bn_silu_nchw_f32(y, n, cv3_c_out, h, w,
-                     cv3_gamma, cv3_beta, cv3_mean, cv3_var, eps,
-                     y);
+    // cv3
+    conv1x1(concat_out, n, cv1_c_out + cv2_c_out, h, w, cv3_w, cv3_c_out, cv3_bias, y);
 }

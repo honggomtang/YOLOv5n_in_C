@@ -73,10 +73,13 @@ int main(void) {
         }
     }
     
-    // 각 detection 비교
+    // 각 detection 비교 (순서대로 비교하되, 같은 confidence일 때를 대비해 더 관대하게)
     int all_ok = 1;
     float max_diff = 0.0f;
     
+    // Python 참조도 confidence 순으로 정렬되어 있다고 가정
+    // 하지만 같은 confidence일 때 순서가 다를 수 있으므로, 
+    // 각 detection을 찾아서 비교하는 방식으로 개선 가능 (현재는 순서대로 비교)
     for (int i = 0; i < num_detections; i++) {
         float diff = detection_diff(&detections[i], &tv_decode_detections[i]);
         max_diff = fmaxf(max_diff, diff);

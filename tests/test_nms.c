@@ -90,13 +90,72 @@ int main(void) {
                output_detections[i].w, output_detections[i].h);
     }
     
-    // Python 참조 결과와 비교 (간단한 검증)
+    // Python 참조 결과와 비교
     printf("\nReference detections (Python):\n");
     for (int i = 0; i < num_ref && i < 5; i++) {  // 처음 5개만 출력
         printf("  [%d] cls=%d conf=%.3f bbox=(%.3f,%.3f,%.3f,%.3f)\n",
                i, tv_nms_detections[i].cls_id, tv_nms_detections[i].conf,
                tv_nms_detections[i].x, tv_nms_detections[i].y,
                tv_nms_detections[i].w, tv_nms_detections[i].h);
+    }
+    
+    // 실제 검증: NMS 로직이 올바르게 동작하는지 확인
+    printf("\n=== Verification ===\n");
+    printf("Note: This test uses synthetic data, not actual decode output.\n");
+    printf("For full pipeline verification, use test_nms_full.\n");
+    
+    int verification_ok = 1;
+    
+    // 1. NMS가 중복을 제거하는지 확인
+    if (output_count > 0 && output_count <= num_input) {
+        printf("✓ NMS correctly reduced detections: %d -> %d\n", num_input, output_count);
+    } else {
+        printf("✗ ERROR: Unexpected output count: %d (expected: 0 < count <= %d)\n", 
+               output_count, num_input);
+        verification_ok = 0;
+    }
+    
+    // 2. 출력이 confidence 내림차순으로 정렬되어 있는지 확인
+    int sorted = 1;
+    for (int i = 0; i < output_count - 1; i++) {
+        if (output_detections[i].conf < output_detections[i + 1].conf) {
+            sorted = 0;
+            break;
+        }
+    }
+    if (sorted) {
+        printf("✓ Output detections are sorted by confidence (descending)\n");
+    } else {
+        printf("✗ ERROR: Output detections are not sorted by confidence\n");
+        verification_ok = 0;
+    }
+    
+    // 3. 같은 클래스의 겹치는 detection이 제거되었는지 확인
+    // (입력에서 cls=0, conf=0.9와 cls=0, conf=0.8, 0.7이 겹치므로 하나만 남아야 함)
+    int cls0_count = 0;
+    for (int i = 0; i < output_count; i++) {
+        if (output_detections[i].cls_id == 0) {
+            cls0_count++;
+        }
+    }
+    // 입력에는 cls=0이 5개 있었는데, 겹치는 것들이 제거되어야 함
+    if (cls0_count < 5) {
+        printf("✓ Overlapping detections of same class were removed (cls=0: %d remaining)\n", cls0_count);
+    } else {
+        printf("⚠ WARNING: May not have removed overlapping detections (cls=0: %d remaining)\n", cls0_count);
+    }
+    
+    // 4. 다른 클래스의 detection은 유지되었는지 확인
+    int cls1_count = 0, cls2_count = 0;
+    for (int i = 0; i < output_count; i++) {
+        if (output_detections[i].cls_id == 1) cls1_count++;
+        if (output_detections[i].cls_id == 2) cls2_count++;
+    }
+    if (cls1_count > 0 && cls2_count > 0) {
+        printf("✓ Detections from different classes are preserved (cls=1: %d, cls=2: %d)\n", 
+               cls1_count, cls2_count);
+    } else {
+        printf("⚠ WARNING: Some class detections may have been incorrectly removed\n");
     }
     
     // IoU 계산 함수 테스트
@@ -108,11 +167,33 @@ int main(void) {
     printf("Box2: (%.2f,%.2f,%.2f,%.2f)\n", box2.x, box2.y, box2.w, box2.h);
     printf("IoU: %.4f\n", iou);
     
+    // IoU가 합리적인 범위인지 확인 (0~1)
+    if (iou >= 0.0f && iou <= 1.0f) {
+        printf("✓ IoU calculation is in valid range [0, 1]: %.4f\n", iou);
+    } else {
+        printf("✗ ERROR: IoU out of range: %.4f (expected: [0, 1])\n", iou);
+        verification_ok = 0;
+    }
+    
+    // 5. IoU가 합리적인 값인지 확인 (겹치는 박스의 경우 0.5 이상이어야 함)
+    if (iou > 0.5f) {
+        printf("✓ IoU value is reasonable for overlapping boxes: %.4f\n", iou);
+    } else {
+        printf("⚠ WARNING: IoU seems low for overlapping boxes: %.4f\n", iou);
+    }
+    
     // 정리
     if (output_detections) {
         free(output_detections);
     }
     
-    printf("\nNMS test completed successfully\n");
-    return 0;
+    // 최종 결과
+    printf("\n=== Test Result ===\n");
+    if (verification_ok) {
+        printf("✓ NMS test completed successfully - all verifications passed\n");
+        return 0;
+    } else {
+        printf("✗ NMS test failed - some verifications did not pass\n");
+        return 1;
+    }
 }

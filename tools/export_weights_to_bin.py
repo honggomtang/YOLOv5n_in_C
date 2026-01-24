@@ -64,46 +64,70 @@ def main() -> int:
     ap.add_argument("--pt", default="assets/yolov5n.pt")
     ap.add_argument("--out", default="assets/weights.bin")
     ap.add_argument("--trust-pickle", action="store_true", help="PyTorch 2.6+ weights_only=False")
+    ap.add_argument(
+        "--classic",
+        action="store_true",
+        help="Anchor-based (Standard YOLOv5n). torch.hub ultralytics/yolov5 custom. "
+        "Needs network. Use for detections_ref match (desktop detect.py).",
+    )
     args = ap.parse_args()
 
-    # .pt 파일 로드
     pt_path = Path(args.pt).expanduser().resolve()
     if not pt_path.exists():
         raise FileNotFoundError(f"PT file not found: {pt_path}")
 
-    # PyTorch 2.6+ defaults weights_only=True, which often fails for YOLOv5 checkpoints
-    # Try ultralytics first (cleaner approach)
-    try:
-        from ultralytics import YOLO
-        model = YOLO(str(pt_path))
-        state_dict = model.model.state_dict()
-        print(f"Loaded model using ultralytics")
-    except Exception as ultra_e:
-        # Fallback to torch.load
+    state_dict = None
+
+    if args.classic:
+        # Classic YOLOv5n (anchor-based, model.24.m.0/m.1/m.2, 255ch). desktop detect.py와 동일.
         try:
-            ckpt = torch.load(pt_path, map_location="cpu", weights_only=True)
-            state_dict = _load_state_dict(ckpt)
+            model = torch.hub.load(
+                "ultralytics/yolov5",
+                "custom",
+                path=str(pt_path),
+                force_reload=False,
+                trust_repo=True,
+            )
+            state_dict = model.state_dict()
+            print("Loaded model using torch.hub ultralytics/yolov5 custom (classic)")
         except Exception as e:
-            if args.trust_pickle:
-                try:
-                    ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
-                    state_dict = _load_state_dict(ckpt)
-                except ModuleNotFoundError as mnfe:
-                    raise ModuleNotFoundError(
-                        "This checkpoint requires YOLOv5 code (e.g., 'models.yolo.Model') to be importable.\n"
-                        "Fix options:\n"
-                        "  1) Install ultralytics: pip install ultralytics, OR\n"
-                        "  2) Run this script inside a cloned ultralytics/yolov5 repo.\n"
-                        f"Original error: {mnfe}"
-                    ) from mnfe
-            else:
-                raise RuntimeError(
-                    "Failed to load .pt with torch.load(..., weights_only=True).\n"
-                    "This is common for YOLOv5 checkpoints on PyTorch 2.6+.\n\n"
-                    "If (and ONLY if) you trust the source of the .pt file, retry with:\n"
-                    "  python export_weights_to_bin.py --pt yolov5n.pt --out weights.bin --trust-pickle\n\n"
-                    f"Original error: {type(e).__name__}: {e}"
-                ) from e
+            raise RuntimeError(
+                f"Classic export failed (needs network): {e}\n"
+                "Run from env with internet, or use export without --classic (DFL)."
+            ) from e
+
+    if state_dict is None:
+        # DFL(Ultralytics) 또는 torch.load 폴백
+        try:
+            from ultralytics import YOLO
+            model = YOLO(str(pt_path))
+            state_dict = model.model.state_dict()
+            print("Loaded model using ultralytics (DFL)")
+        except Exception:
+            try:
+                ckpt = torch.load(str(pt_path), map_location="cpu", weights_only=True)
+                state_dict = _load_state_dict(ckpt)
+            except Exception as e:
+                if args.trust_pickle:
+                    try:
+                        ckpt = torch.load(str(pt_path), map_location="cpu", weights_only=False)
+                        state_dict = _load_state_dict(ckpt)
+                    except ModuleNotFoundError as mnfe:
+                        raise ModuleNotFoundError(
+                            "This checkpoint requires YOLOv5 code (e.g., 'models.yolo.Model') to be importable.\n"
+                            "Fix options:\n"
+                            "  1) Install ultralytics: pip install ultralytics, OR\n"
+                            "  2) Run this script inside a cloned ultralytics/yolov5 repo.\n"
+                            f"Original error: {mnfe}"
+                        ) from mnfe
+                else:
+                    raise RuntimeError(
+                        "Failed to load .pt with torch.load(..., weights_only=True).\n"
+                        "This is common for YOLOv5 checkpoints on PyTorch 2.6+.\n\n"
+                        "If (and ONLY if) you trust the source of the .pt file, retry with:\n"
+                        "  python export_weights_to_bin.py --pt yolov5n.pt --out weights.bin --trust-pickle\n\n"
+                        f"Original error: {type(e).__name__}: {e}"
+                    ) from e
 
     # 바이너리 파일로 저장
     out_path = Path(args.out).expanduser().resolve()

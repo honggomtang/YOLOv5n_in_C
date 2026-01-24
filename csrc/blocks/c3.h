@@ -3,30 +3,19 @@
 
 #include <stdint.h>
 
-// C3 블록: Cross-stage partial bottleneck
+// 디버그용
+void c3_set_debug_layer(int layer);
+
+// Fused C3 블록
 void c3_nchw_f32(
     const float* x, int32_t n, int32_t c_in, int32_t h, int32_t w,
-    const float* cv1_w, int32_t cv1_c_out,
-    const float* cv1_gamma, const float* cv1_beta,
-    const float* cv1_mean, const float* cv1_var,
-    const float* cv2_w, int32_t cv2_c_out,
-    const float* cv2_gamma, const float* cv2_beta,
-    const float* cv2_mean, const float* cv2_var,
-    const float* cv3_w, int32_t cv3_c_out,
-    const float* cv3_gamma, const float* cv3_beta,
-    const float* cv3_mean, const float* cv3_var,
+    const float* cv1_w, int32_t cv1_c_out, const float* cv1_bias,
+    const float* cv2_w, int32_t cv2_c_out, const float* cv2_bias,
+    const float* cv3_w, int32_t cv3_c_out, const float* cv3_bias,
     int32_t n_bottleneck,
-    const float* const* bottleneck_cv1_w,
-    const float* const* bottleneck_cv1_gamma,
-    const float* const* bottleneck_cv1_beta,
-    const float* const* bottleneck_cv1_mean,
-    const float* const* bottleneck_cv1_var,
-    const float* const* bottleneck_cv2_w,
-    const float* const* bottleneck_cv2_gamma,
-    const float* const* bottleneck_cv2_beta,
-    const float* const* bottleneck_cv2_mean,
-    const float* const* bottleneck_cv2_var,
-    float eps,
+    const float* const* bn_cv1_w, const float* const* bn_cv1_bias,
+    const float* const* bn_cv2_w, const float* const* bn_cv2_bias,
+    int32_t shortcut,  // 1=add residual in bottleneck, 0=no shortcut
     float* y);
 
 #endif // C3_H

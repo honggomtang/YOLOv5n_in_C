@@ -4,178 +4,151 @@
 #include <string.h>
 #include <stdint.h>
 
-// 임베디드용: 메모리 직접 접근 (파일 시스템 없음)
-// base_addr: .bin 데이터가 로드된 메모리 시작 주소
-int weights_init_from_memory(uintptr_t base_addr, weights_loader_t* loader) {
-    const uint8_t* ptr = (const uint8_t*)base_addr;
-    
-    // 텐서 개수 읽기
+// 헬퍼: 메모리에서 안전하게 값 읽기 (Unaligned access 방지용 memcpy 사용)
+static inline void safe_read(void* dest, const uint8_t** src, size_t size) {
+    memcpy(dest, *src, size);
+    *src += size;
+}
+
+// 공통 파싱 로직
+static int parse_weights_data(const uint8_t* ptr, size_t data_len, weights_loader_t* loader) {
+    const uint8_t* curr = ptr;
+    const uint8_t* end = ptr + data_len;
+
+    // 1. 텐서 개수 읽기
+    if (curr + 4 > end) return -1;
     uint32_t num_tensors;
-    memcpy(&num_tensors, ptr, sizeof(uint32_t));
-    ptr += sizeof(uint32_t);
-    
-    // 텐서 배열 할당 (메타데이터만)
+    safe_read(&num_tensors, &curr, 4);
+
+    loader->num_tensors = (int32_t)num_tensors;
     loader->tensors = (tensor_info_t*)calloc(num_tensors, sizeof(tensor_info_t));
-    if (!loader->tensors) {
-        return -1;
-    }
-    loader->num_tensors = num_tensors;
-    loader->metadata_buffer = NULL;  // 메모리 직접 접근 모드에서는 할당 안 함
-    
-    // 각 텐서 메타데이터 파싱
-    for (int i = 0; i < num_tensors; i++) {
+    if (!loader->tensors) return -1;
+
+    for (int i = 0; i < (int)num_tensors; i++) {
         tensor_info_t* t = &loader->tensors[i];
-        
-        // 키 이름 길이
+
+        // 2. 키 이름 길이 읽기
+        if (curr + 4 > end) return -1;
         uint32_t key_len;
-        memcpy(&key_len, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        
-        // 키 이름 포인터 저장 (메모리 내 문자열 직접 참조)
-        t->name = (const char*)ptr;
-        ptr += key_len;
-        
-        // shape 차원 수
+        safe_read(&key_len, &curr, 4);
+
+        if (key_len > 1024) return -1; // Sanity check
+        if (curr + key_len > end) return -1;
+
+        // 3. 키 이름 할당 및 복사
+        t->name = (char*)malloc(key_len + 1);
+        if (!t->name) return -1;
+        safe_read(t->name, &curr, key_len);
+        t->name[key_len] = '\0';
+
+        // 4. 차원 수 읽기
+        if (curr + 4 > end) return -1;
         uint32_t ndim;
-        memcpy(&ndim, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        t->ndim = ndim;
-        
-        // shape 배열 포인터 저장 (메모리 내 배열 직접 참조)
-        t->shape = (const int32_t*)ptr;
-        ptr += ndim * sizeof(uint32_t);
-        
-        // 원소 개수 계산
+        safe_read(&ndim, &curr, 4);
+        t->ndim = (int32_t)ndim;
+
+        if (ndim > MAX_TENSOR_DIMS) return -1;
+
+        // 5. Shape 읽기 (배열에 값 복사)
+        if (curr + ndim * 4 > end) return -1;
         t->num_elements = 1;
-        for (int j = 0; j < ndim; j++) {
-            t->num_elements *= t->shape[j];
+        for (int j = 0; j < (int)ndim; j++) {
+            uint32_t dim_val;
+            safe_read(&dim_val, &curr, 4);
+            t->shape[j] = (int32_t)dim_val;
+            t->num_elements *= dim_val;
         }
+
+        // 6. 데이터 복사 (malloc으로 정렬된 메모리 할당)
+        size_t data_bytes = t->num_elements * sizeof(float);
+        if (curr + data_bytes > end) return -1;
+
+        t->data = (float*)malloc(data_bytes);
+        if (!t->data) return -1;
         
-        // 데이터 포인터 저장 (메모리 내 데이터 직접 참조)
-        t->data = (const float*)ptr;
-        ptr += t->num_elements * sizeof(float);
+        // 데이터 memcpy (Unaligned source -> Aligned dest)
+        safe_read(t->data, &curr, data_bytes);
     }
-    
+
     return 0;
 }
 
-// 개발/테스트용: 파일 시스템에서 로드
+int weights_init_from_memory(uintptr_t base_addr, weights_loader_t* loader) {
+    return parse_weights_data((const uint8_t*)base_addr, 0x7FFFFFFF, loader);
+}
+
 int weights_load_from_file(const char* bin_path, weights_loader_t* loader) {
     FILE* f = fopen(bin_path, "rb");
     if (!f) {
-        fprintf(stderr, "Error: Cannot open weights file: %s\n", bin_path);
+        fprintf(stderr, "Error: Cannot open %s\n", bin_path);
         return -1;
     }
-    
-    // 파일 크기 확인
+
     fseek(f, 0, SEEK_END);
     size_t file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    
-    // 전체 파일을 메모리에 로드
-    loader->metadata_buffer = (uint8_t*)malloc(file_size);
-    if (!loader->metadata_buffer) {
+
+    uint8_t* buffer = (uint8_t*)malloc(file_size);
+    if (!buffer) {
         fclose(f);
         return -1;
     }
-    
-    if (fread(loader->metadata_buffer, 1, file_size, f) != file_size) {
-        free(loader->metadata_buffer);
-        loader->metadata_buffer = NULL;
+
+    if (fread(buffer, 1, file_size, f) != file_size) {
+        free(buffer);
         fclose(f);
         return -1;
     }
     fclose(f);
+
+    int ret = parse_weights_data(buffer, file_size, loader);
+    free(buffer);
     
-    // 메모리 직접 접근 방식과 동일하게 파싱
-    const uint8_t* ptr = loader->metadata_buffer;
-    
-    // 텐서 개수 읽기
-    uint32_t num_tensors;
-    memcpy(&num_tensors, ptr, sizeof(uint32_t));
-    ptr += sizeof(uint32_t);
-    
-    // 텐서 배열 할당
-    loader->tensors = (tensor_info_t*)calloc(num_tensors, sizeof(tensor_info_t));
-    if (!loader->tensors) {
-        free(loader->metadata_buffer);
-        loader->metadata_buffer = NULL;
-        return -1;
+    if (ret != 0) {
+        weights_free(loader);
     }
-    loader->num_tensors = num_tensors;
-    
-    // 각 텐서 메타데이터 파싱
-    for (int i = 0; i < num_tensors; i++) {
-        tensor_info_t* t = &loader->tensors[i];
-        
-        // 키 이름 길이
-        uint32_t key_len;
-        memcpy(&key_len, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        
-        // 키 이름 포인터 저장 (버퍼 내 문자열 직접 참조)
-        t->name = (const char*)ptr;
-        ptr += key_len;
-        
-        // shape 차원 수
-        uint32_t ndim;
-        memcpy(&ndim, ptr, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-        t->ndim = ndim;
-        
-        // shape 배열 포인터 저장 (버퍼 내 배열 직접 참조)
-        t->shape = (const int32_t*)ptr;
-        ptr += ndim * sizeof(uint32_t);
-        
-        // 원소 개수 계산
-        t->num_elements = 1;
-        for (int j = 0; j < ndim; j++) {
-            t->num_elements *= t->shape[j];
-        }
-        
-        // 데이터 포인터 저장 (버퍼 내 데이터 직접 참조)
-        t->data = (const float*)ptr;
-        ptr += t->num_elements * sizeof(float);
-    }
-    
-    return 0;
+    return ret;
 }
 
 const tensor_info_t* weights_find_tensor(const weights_loader_t* loader, const char* name) {
+    char search_name[512];
+    
+    // 1. 정확한 매치
     for (int i = 0; i < loader->num_tensors; i++) {
-        // 키 이름은 null terminator 없이 저장되어 있으므로, 길이를 계산해서 비교
-        const char* tensor_name = loader->tensors[i].name;
-        size_t name_len = strlen(name);
-        // 키 이름의 길이는 다음 필드(shape 차원 수)까지의 거리로 계산
-        // 하지만 정확한 길이를 알 수 없으므로, strncmp 사용
-        if (strncmp(tensor_name, name, name_len) == 0) {
-            // 키 이름 뒤에 바로 다음 데이터가 오므로, 정확히 name_len 바이트인지 확인
-            // (키 이름이 정확히 일치하는지 확인하기 위해 다음 문자가 숫자/문자가 아닌지 체크)
-            char next_char = tensor_name[name_len];
-            if (next_char == '\0' || next_char < 32 || next_char > 126) {
-                // 다음 문자가 제어 문자이거나 범위 밖이면 키 이름이 끝난 것으로 간주
+        if (strcmp(loader->tensors[i].name, name) == 0) {
+            return &loader->tensors[i];
+        }
+    }
+
+    // 2. model.* -> model.model.model.* 매핑 시도
+    if (strncmp(name, "model.", 6) == 0) {
+        snprintf(search_name, sizeof(search_name), "model.model.%s", name);
+        for (int i = 0; i < loader->num_tensors; i++) {
+            if (strcmp(loader->tensors[i].name, search_name) == 0) {
                 return &loader->tensors[i];
             }
         }
     }
+
     return NULL;
 }
 
 const float* weights_get_tensor_data(const weights_loader_t* loader, const char* name) {
     const tensor_info_t* t = weights_find_tensor(loader, name);
-    return t ? t->data : NULL;
+    if (!t) {
+        fprintf(stderr, "Warning: Weight not found: %s\n", name);
+        return NULL;
+    }
+    return t->data;
 }
 
 void weights_free(weights_loader_t* loader) {
-    if (!loader) return;
-    
-    // 파일 시스템 모드에서만 버퍼 해제
-    if (loader->metadata_buffer) {
-        free(loader->metadata_buffer);
-        loader->metadata_buffer = NULL;
+    if (!loader || !loader->tensors) return;
+
+    for (int i = 0; i < loader->num_tensors; i++) {
+        if (loader->tensors[i].name) free(loader->tensors[i].name);
+        if (loader->tensors[i].data) free(loader->tensors[i].data);
     }
-    
-    // 텐서 배열 해제 (메타데이터만, 실제 데이터는 버퍼/메모리에 있음)
     free(loader->tensors);
     loader->tensors = NULL;
     loader->num_tensors = 0;

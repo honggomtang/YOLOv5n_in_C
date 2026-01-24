@@ -4,40 +4,53 @@
 #include <stdint.h>
 #include <string.h>
 
-// 임베디드용: 메모리 직접 접근 (파일 시스템 없음)
-// base_addr: 이미지 데이터가 로드된 메모리 시작 주소
-int image_init_from_memory(uintptr_t base_addr, preprocessed_image_t* img) {
-    const uint8_t* ptr = (const uint8_t*)base_addr;
-    
-    // 헤더 읽기
+static inline void safe_read(void* dest, const uint8_t** src, size_t size) {
+    memcpy(dest, *src, size);
+    *src += size;
+}
+
+static int parse_image_data(const uint8_t* ptr, size_t data_len, preprocessed_image_t* img) {
+    const uint8_t* curr = ptr;
+    const uint8_t* end = ptr + data_len;
+
+    // 헤더 크기: 6 * 4 bytes = 24 bytes
+    if (curr + 24 > end) return -1;
+
     uint32_t original_w, original_h, size;
     float scale;
     uint32_t pad_x, pad_y;
     
-    memcpy(&original_w, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&original_h, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&scale, ptr, sizeof(float)); ptr += sizeof(float);
-    memcpy(&pad_x, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&pad_y, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&size, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    safe_read(&original_w, &curr, 4);
+    safe_read(&original_h, &curr, 4);
+    safe_read(&scale, &curr, 4);
+    safe_read(&pad_x, &curr, 4);
+    safe_read(&pad_y, &curr, 4);
+    safe_read(&size, &curr, 4);
     
-    img->original_w = original_w;
-    img->original_h = original_h;
+    img->original_w = (int32_t)original_w;
+    img->original_h = (int32_t)original_h;
     img->scale = scale;
-    img->pad_x = pad_x;
-    img->pad_y = pad_y;
+    img->pad_x = (int32_t)pad_x;
+    img->pad_y = (int32_t)pad_y;
     img->c = 3;
-    img->h = size;
-    img->w = size;
+    img->h = (int32_t)size;
+    img->w = (int32_t)size;
     
-    // 이미지 데이터 포인터 저장 (메모리 내 데이터 직접 참조)
-    img->data = (const float*)ptr;
-    img->buffer = NULL;  // 메모리 직접 접근 모드
-    
+    // 데이터 복사
+    size_t data_bytes = 3 * size * size * sizeof(float);
+    if (curr + data_bytes > end) return -1;
+
+    img->data = (float*)malloc(data_bytes);
+    if (!img->data) return -1;
+
+    safe_read(img->data, &curr, data_bytes);
     return 0;
 }
 
-// 개발/테스트용: 파일 시스템에서 로드
+int image_init_from_memory(uintptr_t base_addr, preprocessed_image_t* img) {
+    return parse_image_data((const uint8_t*)base_addr, 0x7FFFFFFF, img);
+}
+
 int image_load_from_bin(const char* bin_path, preprocessed_image_t* img) {
     FILE* f = fopen(bin_path, "rb");
     if (!f) {
@@ -45,12 +58,10 @@ int image_load_from_bin(const char* bin_path, preprocessed_image_t* img) {
         return -1;
     }
     
-    // 파일 크기 확인
     fseek(f, 0, SEEK_END);
     size_t file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
     
-    // 전체 파일을 메모리에 로드
     uint8_t* buffer = (uint8_t*)malloc(file_size);
     if (!buffer) {
         fclose(f);
@@ -64,43 +75,16 @@ int image_load_from_bin(const char* bin_path, preprocessed_image_t* img) {
     }
     fclose(f);
     
-    // 메모리 직접 접근 방식과 동일하게 파싱
-    const uint8_t* ptr = buffer;
+    int ret = parse_image_data(buffer, file_size, img);
+    free(buffer); // 복사 완료했으므로 임시 버퍼 해제
     
-    // 헤더 읽기
-    uint32_t original_w, original_h, size;
-    float scale;
-    uint32_t pad_x, pad_y;
-    
-    memcpy(&original_w, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&original_h, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&scale, ptr, sizeof(float)); ptr += sizeof(float);
-    memcpy(&pad_x, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&pad_y, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&size, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    
-    img->original_w = original_w;
-    img->original_h = original_h;
-    img->scale = scale;
-    img->pad_x = pad_x;
-    img->pad_y = pad_y;
-    img->c = 3;
-    img->h = size;
-    img->w = size;
-    
-    // 이미지 데이터 포인터 저장 (버퍼 내 데이터 직접 참조)
-    img->data = (const float*)ptr;
-    img->buffer = buffer;  // 파일 시스템 모드: 버퍼 포인터 저장
-    
-    return 0;
+    return ret;
 }
 
 void image_free(preprocessed_image_t* img) {
     if (!img) return;
-    // 파일 시스템 모드에서만 버퍼 해제
-    if (img->buffer) {
-        free(img->buffer);
-        img->buffer = NULL;
+    if (img->data) {
+        free(img->data);
+        img->data = NULL;
     }
-    img->data = NULL;
 }
