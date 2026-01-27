@@ -9,12 +9,13 @@
     source .venv/bin/activate
     python /path/to/yolov5n/tools/gen_test_vectors.py
 """
+import os
 import sys
 from pathlib import Path
 import argparse
 
-# YOLOv5 repo 경로 설정
-YOLOV5_REPO = Path.home() / "Desktop" / "yolov5"
+# YOLOv5 repo 경로 설정 (기본: ~/Desktop/yolov5, 또는 환경변수 YOLOV5_REPO)
+YOLOV5_REPO = Path(os.environ.get("YOLOV5_REPO", str(Path.home() / "Desktop" / "yolov5")))
 if YOLOV5_REPO.exists():
     sys.path.insert(0, str(YOLOV5_REPO))
 

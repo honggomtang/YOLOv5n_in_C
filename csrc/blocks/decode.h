@@ -10,9 +10,16 @@ typedef struct {
     int32_t cls_id;     // class ID
 } detection_t;
 
+// GCC/Clang 계열에서만 packed 적용 (Vitis/GCC 타겟)
+#if defined(__GNUC__)
+#define YOLO_PACKED __attribute__((packed))
+#else
+#define YOLO_PACKED
+#endif
+
 // HW 출력용 구조체 (8 bytes, 고정 크기)
 // 실제 FPGA에서 호스트로 전송하는 형식
-typedef struct __attribute__((packed)) {
+typedef struct YOLO_PACKED {
     uint16_t x, y, w, h;   // 픽셀 좌표 (정수, 0~65535)
     uint8_t  class_id;     // 클래스 ID (0~79)
     uint8_t  confidence;   // 신뢰도 (0~255, conf*255)

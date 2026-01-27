@@ -4,26 +4,25 @@ Fused 모델로 detections_ref.bin 생성 (로컬 yolov5 레포 사용)
 C 코드와 동일한 HW 출력 포맷 (바이너리)
 """
 
+import argparse
+import os
 import sys
 import struct
 from pathlib import Path
 
-# 로컬 yolov5 레포 사용
-YOLOV5_REPO = Path("/Users/kinghong/Desktop/yolov5")
-sys.path.insert(0, str(YOLOV5_REPO))
-
 import torch
-import numpy as np
 from PIL import Image
 
 YOLOV5N_ROOT = Path(__file__).resolve().parents[1]
-IMG_PATH = YOLOV5N_ROOT / "data" / "image" / "zidane.jpg"
-WEIGHTS_PATH = YOLOV5N_ROOT / "assets" / "yolov5n.pt"
-OUT_BIN_PATH = YOLOV5N_ROOT / "data" / "output" / "ref" / "detections.bin"
 
-CONF_THRES = 0.25
-IOU_THRES = 0.45
-IMG_SIZE = 640
+DEFAULT_YOLOV5_REPO = Path(os.environ.get("YOLOV5_REPO", "/Users/kinghong/Desktop/yolov5"))
+DEFAULT_IMG_PATH = YOLOV5N_ROOT / "data" / "image" / "zidane.jpg"
+DEFAULT_WEIGHTS_PATH = YOLOV5N_ROOT / "assets" / "yolov5n.pt"
+DEFAULT_OUT_BIN_PATH = YOLOV5N_ROOT / "data" / "output" / "ref" / "detections.bin"
+
+DEFAULT_CONF_THRES = 0.25
+DEFAULT_IOU_THRES = 0.45
+DEFAULT_IMG_SIZE = 640
 
 
 def preprocess_image(img_path, size=640):
@@ -45,27 +44,40 @@ def preprocess_image(img_path, size=640):
 
 
 def main():
-    print(f"Loading model from local yolov5 repo...")
-    
+    ap = argparse.ArgumentParser(description="YOLOv5n Python reference (fused) → HW binary output")
+    ap.add_argument("--yolov5-repo", type=Path, default=DEFAULT_YOLOV5_REPO, help="local yolov5 repo path")
+    ap.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS_PATH, help="yolov5n.pt path")
+    ap.add_argument("--img", type=Path, default=DEFAULT_IMG_PATH, help="input image path")
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT_BIN_PATH, help="output detections.bin path")
+    ap.add_argument("--img-size", type=int, default=DEFAULT_IMG_SIZE, help="inference image size")
+    ap.add_argument("--conf", type=float, default=DEFAULT_CONF_THRES, help="confidence threshold")
+    ap.add_argument("--iou", type=float, default=DEFAULT_IOU_THRES, help="NMS IoU threshold")
+    args = ap.parse_args()
+
+    yolov5_repo = args.yolov5_repo.expanduser().resolve()
+    sys.path.insert(0, str(yolov5_repo))
+
+    print("Loading model from local yolov5 repo...")
+
     # 로컬 yolov5의 hubconf.py 사용
-    model = torch.hub.load(str(YOLOV5_REPO), 'custom', path=str(WEIGHTS_PATH), 
+    model = torch.hub.load(str(yolov5_repo), 'custom', path=str(args.weights),
                            source='local', trust_repo=True)
     
     # torch.hub.load는 자동으로 fuse()를 호출함
     print("Model loaded (auto-fused)")
     
-    model.conf = CONF_THRES
-    model.iou = IOU_THRES
+    model.conf = args.conf
+    model.iou = args.iou
     model.eval()
     
     # 이미지 전처리 (PIL Image)
-    print(f"Preprocessing: {IMG_PATH.name}")
-    img = preprocess_image(IMG_PATH, IMG_SIZE)
+    print(f"Preprocessing: {args.img.name}")
+    img = preprocess_image(args.img, args.img_size)
     print(f"Input size: {img.size}")
     
     # 추론 (AutoShape이 알아서 처리)
     print("Running inference...")
-    results = model(img, size=IMG_SIZE)
+    results = model(img, size=args.img_size)
     
     # 결과 파싱
     preds = results.xyxy[0].cpu().numpy()
@@ -83,8 +95,8 @@ def main():
     rows.sort(key=lambda r: r[1], reverse=True)
     
     # HW 출력용 바이너리 파일로 저장
-    OUT_BIN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUT_BIN_PATH.open("wb") as f:
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("wb") as f:
         # 1. detection 개수 (1 byte)
         count = min(len(rows), 255)
         f.write(struct.pack('B', count))
@@ -104,7 +116,7 @@ def main():
                                 cls_id, hw_conf, 0, 0))
     
     print(f"\nTotal detections: {len(rows)}")
-    print(f"Saved to: {OUT_BIN_PATH} ({1 + count * 12} bytes)")
+    print(f"Saved to: {args.out} ({1 + count * 12} bytes)")
     
     if rows:
         print("\nTop 5 detections:")

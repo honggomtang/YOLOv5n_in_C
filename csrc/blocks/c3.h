@@ -3,9 +3,6 @@
 
 #include <stdint.h>
 
-// 디버그용
-void c3_set_debug_layer(int layer);
-
 // Fused C3 블록
 void c3_nchw_f32(
     const float* x, int32_t n, int32_t c_in, int32_t h, int32_t w,

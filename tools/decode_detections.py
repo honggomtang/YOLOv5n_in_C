@@ -33,11 +33,14 @@ COCO_CLASSES = [
 ]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-IMG_PATH = PROJECT_ROOT / "data" / "image" / "zidane.jpg"
-C_BIN_PATH = PROJECT_ROOT / "data" / "output" / "detections.bin"
-REF_BIN_PATH = PROJECT_ROOT / "data" / "output" / "ref" / "detections.bin"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
-REF_OUTPUT_DIR = PROJECT_ROOT / "data" / "output" / "ref"
+
+DEFAULT_IMG_PATH = PROJECT_ROOT / "data" / "image" / "zidane.jpg"
+DEFAULT_C_BIN_PATH = PROJECT_ROOT / "data" / "output" / "detections.bin"
+DEFAULT_REF_BIN_PATH = PROJECT_ROOT / "data" / "output" / "ref" / "detections.bin"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
+DEFAULT_REF_OUTPUT_DIR = PROJECT_ROOT / "data" / "output" / "ref"
+
+DET_RECORD_SIZE = 12  # bytes: <HHHHBBBB
 
 @dataclass
 class Detection:
@@ -84,8 +87,8 @@ def read_detections_bin(path: Path) -> list[Detection]:
         
         # 각 detection: 12 bytes (uint16 x,y,w,h + uint8 cls,conf,reserved[2])
         for _ in range(count):
-            data = f.read(12)
-            if len(data) < 12:
+            data = f.read(DET_RECORD_SIZE)
+            if len(data) < DET_RECORD_SIZE:
                 break
             x, y, w, h, cls_id, conf, r1, r2 = struct.unpack('<HHHHBBBB', data)
             detections.append(Detection(
@@ -150,7 +153,7 @@ def visualize(detections: list[Detection], img_path: Path, out_path: Path, title
         font = ImageFont.load_default()
     
     # bbox 그리기
-    for i, d in enumerate(detections):
+    for d in detections:
         color = colors[d.class_id % len(colors)]
         
         # bbox
@@ -205,30 +208,37 @@ def compare_detections(c_dets: list[Detection], ref_dets: list[Detection]):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Decode and visualize detections")
+    parser = argparse.ArgumentParser(description="Decode and visualize detections (HW binary format)")
     parser.add_argument("--ref", action="store_true", help="Process reference (Python) result")
     parser.add_argument("--compare", action="store_true", help="Compare C and Python results")
     parser.add_argument("--no-viz", action="store_true", help="Skip visualization")
+    parser.add_argument("--img", type=Path, default=DEFAULT_IMG_PATH, help="input image path (for visualization)")
+    parser.add_argument("--c-bin", type=Path, default=DEFAULT_C_BIN_PATH, help="C detections.bin path")
+    parser.add_argument("--ref-bin", type=Path, default=DEFAULT_REF_BIN_PATH, help="Python ref detections.bin path")
+    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="output directory for C results")
+    parser.add_argument("--ref-out-dir", type=Path, default=DEFAULT_REF_OUTPUT_DIR, help="output directory for ref results")
     args = parser.parse_args()
     
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = args.out_dir.expanduser().resolve()
+    ref_out_dir = args.ref_out_dir.expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
     
     if args.compare:
         # 둘 다 처리하고 비교
         print("=== C Result ===")
-        c_dets = read_detections_bin(C_BIN_PATH)
+        c_dets = read_detections_bin(args.c_bin)
         if c_dets:
-            write_detections_txt(c_dets, OUTPUT_DIR / "detections.txt", "C Detection Results")
+            write_detections_txt(c_dets, out_dir / "detections.txt", "C Detection Results")
             if not args.no_viz:
-                visualize(c_dets, IMG_PATH, OUTPUT_DIR / "detections.jpg", "C Result")
+                visualize(c_dets, args.img, out_dir / "detections.jpg", "C Result")
         
         print("\n=== Python Reference ===")
-        ref_dets = read_detections_bin(REF_BIN_PATH)
+        ref_dets = read_detections_bin(args.ref_bin)
         if ref_dets:
-            REF_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            write_detections_txt(ref_dets, REF_OUTPUT_DIR / "detections.txt", "Python Reference")
+            ref_out_dir.mkdir(parents=True, exist_ok=True)
+            write_detections_txt(ref_dets, ref_out_dir / "detections.txt", "Python Reference")
             if not args.no_viz:
-                visualize(ref_dets, IMG_PATH, REF_OUTPUT_DIR / "detections.jpg", "Python Reference")
+                visualize(ref_dets, args.img, ref_out_dir / "detections.jpg", "Python Reference")
         
         if c_dets and ref_dets:
             compare_detections(c_dets, ref_dets)
@@ -236,12 +246,12 @@ def main():
     elif args.ref:
         # Python 참조만
         print("=== Python Reference ===")
-        dets = read_detections_bin(REF_BIN_PATH)
+        dets = read_detections_bin(args.ref_bin)
         if dets:
-            REF_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            write_detections_txt(dets, REF_OUTPUT_DIR / "detections.txt", "Python Reference")
+            ref_out_dir.mkdir(parents=True, exist_ok=True)
+            write_detections_txt(dets, ref_out_dir / "detections.txt", "Python Reference")
             if not args.no_viz:
-                visualize(dets, IMG_PATH, REF_OUTPUT_DIR / "detections.jpg", "Python Reference")
+                visualize(dets, args.img, ref_out_dir / "detections.jpg", "Python Reference")
             
             print(f"\nDetections: {len(dets)}")
             for d in dets[:5]:
@@ -250,11 +260,11 @@ def main():
     else:
         # C 결과만
         print("=== C Result ===")
-        dets = read_detections_bin(C_BIN_PATH)
+        dets = read_detections_bin(args.c_bin)
         if dets:
-            write_detections_txt(dets, OUTPUT_DIR / "detections.txt", "C Detection Results")
+            write_detections_txt(dets, out_dir / "detections.txt", "C Detection Results")
             if not args.no_viz:
-                visualize(dets, IMG_PATH, OUTPUT_DIR / "detections.jpg", "C Result")
+                visualize(dets, args.img, out_dir / "detections.jpg", "C Result")
             
             print(f"\nDetections: {len(dets)}")
             for d in dets[:5]:

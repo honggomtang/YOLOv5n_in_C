@@ -22,6 +22,19 @@
 #define IOU_THRESHOLD 0.45f
 #define MAX_DETECTIONS 300
 
+// HW 타겟에서 printf를 쉽게 끄기 위한 옵션
+// - 기본값(1): 현재 데스크탑 디버깅 출력 유지
+// - 0: 로그 비활성화 (베어메탈/성능용)
+#ifndef YOLO_VERBOSE
+#define YOLO_VERBOSE 1
+#endif
+
+#if YOLO_VERBOSE
+#define YOLO_LOG(...) printf(__VA_ARGS__)
+#else
+#define YOLO_LOG(...) ((void)0)
+#endif
+
 static const float STRIDES[3] = {8.0f, 16.0f, 32.0f};
 static const float ANCHORS[3][6] = {
     {10.0f, 13.0f, 16.0f, 30.0f, 33.0f, 23.0f},
@@ -33,7 +46,7 @@ int main(int argc, char* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    printf("=== YOLOv5n Inference (Fused) ===\n\n");
+    YOLO_LOG("=== YOLOv5n Inference (Fused) ===\n\n");
     
     // 이미지 로드
     preprocessed_image_t img;
@@ -41,7 +54,7 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Failed to load image\n");
         return 1;
     }
-    printf("Image: %dx%d\n", img.w, img.h);
+    YOLO_LOG("Image: %dx%d\n", img.w, img.h);
     
     // 가중치 로드
     weights_loader_t weights;
@@ -50,7 +63,7 @@ int main(int argc, char* argv[]) {
         image_free(&img);
         return 1;
     }
-    printf("Weights: %d tensors\n\n", weights.num_tensors);
+    YOLO_LOG("Weights: %d tensors\n\n", weights.num_tensors);
     
     const int n = 1;
     
@@ -83,7 +96,7 @@ int main(int argc, char* argv[]) {
     float* p4  = malloc(1 * 255 * 40  * 40  * sizeof(float));
     float* p5  = malloc(1 * 255 * 20  * 20  * sizeof(float));
 
-    printf("Running inference...\n");
+    YOLO_LOG("Running inference...\n");
     
     // ===== Backbone =====
     // Layer 0: Conv 6x6 s2

@@ -1,7 +1,5 @@
 /**
  * Classic YOLOv5n Anchor-based Decode
- *
- * detect_friend.c 로직과 동일.
  * 255ch = 3 * 85. Layout: [anchor0_85, anchor1_85, anchor2_85].
  * base = (a*85)*(H*W) + (y*W+x). x,y,w,h,obj,cls0..79.
  */

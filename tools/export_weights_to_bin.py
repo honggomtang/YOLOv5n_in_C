@@ -1,6 +1,5 @@
 """
-weights.h를 .bin 파일로 변환
-바이너리 형식으로 저장하여 컴파일 시간 단축 및 메모리 효율성 향상
+PyTorch .pt 모델을 C용 weights.bin으로 변환 (Fused 모델 지원)
 """
 
 from __future__ import annotations
@@ -14,13 +13,7 @@ import torch
 
 
 def _load_state_dict(obj: Any) -> Dict[str, Any]:
-    """
-    YOLOv5 .pt can store:
-      - a full model object
-      - a dict with keys like 'model', 'ema', etc.
-      - a plain state_dict
-    We try to find a state_dict robustly.
-    """
+    """YOLOv5 .pt에서 state_dict 추출 (여러 형식 지원)"""
     # Plain state_dict case
     if isinstance(obj, dict) and all(isinstance(k, str) for k in obj.keys()):
         # If values look like tensors, this might already be a state_dict.
@@ -79,7 +72,7 @@ def main() -> int:
     state_dict = None
 
     if args.classic:
-        # Classic YOLOv5n (anchor-based, model.24.m.0/m.1/m.2, 255ch). desktop detect.py와 동일.
+        # Anchor-based YOLOv5n (model.24.m.0/m.1/m.2, 255ch)
         try:
             model = torch.hub.load(
                 "ultralytics/yolov5",
@@ -89,11 +82,11 @@ def main() -> int:
                 trust_repo=True,
             )
             state_dict = model.state_dict()
-            print("Loaded model using torch.hub ultralytics/yolov5 custom (classic)")
+            print("Loaded model using torch.hub ultralytics/yolov5 (classic)")
         except Exception as e:
             raise RuntimeError(
                 f"Classic export failed (needs network): {e}\n"
-                "Run from env with internet, or use export without --classic (DFL)."
+                "Run from env with internet, or use export without --classic."
             ) from e
 
     if state_dict is None:
@@ -114,19 +107,15 @@ def main() -> int:
                         state_dict = _load_state_dict(ckpt)
                     except ModuleNotFoundError as mnfe:
                         raise ModuleNotFoundError(
-                            "This checkpoint requires YOLOv5 code (e.g., 'models.yolo.Model') to be importable.\n"
-                            "Fix options:\n"
-                            "  1) Install ultralytics: pip install ultralytics, OR\n"
-                            "  2) Run this script inside a cloned ultralytics/yolov5 repo.\n"
-                            f"Original error: {mnfe}"
+                            f"Checkpoint requires YOLOv5 code to be importable.\n"
+                            f"Options: 1) pip install ultralytics, 2) Run inside yolov5 repo.\n"
+                            f"Error: {mnfe}"
                         ) from mnfe
                 else:
                     raise RuntimeError(
-                        "Failed to load .pt with torch.load(..., weights_only=True).\n"
-                        "This is common for YOLOv5 checkpoints on PyTorch 2.6+.\n\n"
-                        "If (and ONLY if) you trust the source of the .pt file, retry with:\n"
-                        "  python export_weights_to_bin.py --pt yolov5n.pt --out weights.bin --trust-pickle\n\n"
-                        f"Original error: {type(e).__name__}: {e}"
+                        f"Failed to load .pt with weights_only=True (PyTorch 2.6+).\n"
+                        f"If trusted, retry with --trust-pickle.\n"
+                        f"Error: {type(e).__name__}: {e}"
                     ) from e
 
     # 바이너리 파일로 저장

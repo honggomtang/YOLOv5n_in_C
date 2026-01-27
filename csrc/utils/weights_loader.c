@@ -4,6 +4,13 @@
 #include <string.h>
 #include <stdint.h>
 
+// HW 타겟에서 로그 정책을 쉽게 바꾸기 위한 옵션
+// - 1: 누락 가중치 경고 출력 (기본)
+// - 0: 경고 미출력 (배포/성능용)
+#ifndef WEIGHTS_WARN_MISSING
+#define WEIGHTS_WARN_MISSING 1
+#endif
+
 // 헬퍼: 메모리에서 안전하게 값 읽기 (Unaligned access 방지용 memcpy 사용)
 static inline void safe_read(void* dest, const uint8_t** src, size_t size) {
     memcpy(dest, *src, size);
@@ -136,7 +143,9 @@ const tensor_info_t* weights_find_tensor(const weights_loader_t* loader, const c
 const float* weights_get_tensor_data(const weights_loader_t* loader, const char* name) {
     const tensor_info_t* t = weights_find_tensor(loader, name);
     if (!t) {
+#if WEIGHTS_WARN_MISSING
         fprintf(stderr, "Warning: Weight not found: %s\n", name);
+#endif
         return NULL;
     }
     return t->data;

@@ -4,9 +4,7 @@
 #include "../operations/bottleneck.h"
 #include "../operations/concat.h"
 
-void c3_set_debug_layer(int layer) { (void)layer; }  // 미사용
-
-// Helper: 1x1 Fused Conv
+// Helper: 1x1 fused conv (conv + bias + SiLU)
 static void conv1x1(
     const float* x, int32_t n, int32_t c_in, int32_t h, int32_t w,
     const float* w_ptr, int32_t c_out, const float* bias,

@@ -3,7 +3,7 @@
 #include <string.h>
 #include <math.h>
 
-// IoU 계산: 두 detection 간의 Intersection over Union
+// IoU 계산 (center+size → corner 변환 후 IoU)
 float calculate_iou(const detection_t* box1, const detection_t* box2) {
     if (!box1 || !box2) return 0.0f;
     
@@ -40,8 +40,7 @@ float calculate_iou(const detection_t* box1, const detection_t* box2) {
     return intersection / union_area;
 }
 
-// Non-Maximum Suppression
-// Greedy NMS 알고리즘: confidence가 높은 순서대로 처리하며, 같은 클래스의 겹치는 detection 제거
+// Greedy NMS: confidence 내림차순 입력을 가정하고 같은 클래스끼리만 억제
 int nms(
     detection_t* detections,
     int32_t num_detections,
@@ -57,11 +56,7 @@ int nms(
     *output_detections = NULL;
     *output_count = 0;
     
-    // 주의: 입력 detection 배열은 이미 confidence 내림차순으로 정렬되어 있어야 함
-    // Python의 torchvision.ops.nms와 동일한 동작:
-    // 1. confidence로 정렬 (이미 완료)
-    // 2. max_nms 개수만큼만 처리
-    // 3. 같은 클래스의 겹치는 detection 제거
+    // 주의: 입력 detection 배열은 confidence 내림차순 정렬 상태여야 함
     
     // 유지할 detection 추적
     int* keep = (int*)calloc(num_detections, sizeof(int));
