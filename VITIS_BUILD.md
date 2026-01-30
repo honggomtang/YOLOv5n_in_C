@@ -75,6 +75,45 @@ MEMORY
 **Vitis에서 MIG length 지정:**  
 플랫폼/보드 설정에서 MIG(DDR 컨트롤러) **주소 범위**를 0x80000000, **길이 32MB**(0x2000000)로 두면, 링커가 생성하는 lscript.ld의 `mig_7series_0` LENGTH도 32MB로 잡히는 경우가 많음. 수동으로 lscript.ld를 수정할 때는 위 MEMORY의 `LENGTH = 0x2000000`을 반드시 넣어 주면 됨.
 
+#### 스택을 BRAM으로 복귀 (벡터 테이블과 분리)
+
+**배경:** 과거에 `.stack`을 BRAM `0x00000000`~에 두었을 때, 스택이 아래로 자라며 **벡터 테이블(0x0~0x40)** 을 침범해 Trap 시 CPU가 0x4로 점프했을 때 스택 데이터를 실행하며 사망하는 문제가 있어 스택을 DDR로 옮긴 상태이다.
+
+**해결:** 벡터 테이블을 BRAM 최앞에 고정하고, **스택 영역만 0x40 이후**에 배치하면 스택을 BRAM에 두어도 안전하다. (스택은 위로 자라지 않으므로 벡터 테이블을 덮지 않음.)
+
+**lscript.ld 예시 (BRAM 64KB, 스택 복귀):**
+
+1. **MEMORY** – BRAM과 DDR 구분 유지:
+```ld
+MEMORY
+{
+  local_memory_cntrl : ORIGIN = 0x0, LENGTH = 0x10000   /* BRAM 64KB */
+  mig_7series_0     : ORIGIN = 0x80000000, LENGTH = 0x2000000   /* DDR 32MB */
+}
+```
+
+2. **벡터 테이블** – BRAM 최앞(0x0), 최소 0x40 바이트 확보:
+```ld
+.vectors : {
+  *(.vectors)
+  . = ALIGN(0x40);   /* 0x0~0x3F 영역만 사용, 스택과 겹치지 않도록 */
+  _vectors_end = .;
+} > local_memory_cntrl
+```
+
+3. **스택** – BRAM 내 0x40 이후 ~ 64KB 끝까지 사용:
+```ld
+.stack : {
+  . = ALIGN(8);
+  _stack_end = .;    /* 스택 하한 (0x40 근처) */
+  . = . + (0x10000 - 0x40);   /* 64KB - 벡터 영역 */
+  _stack = .;        /* SP 초기값 = 스택 상한 */
+  *(.stack)
+} > local_memory_cntrl
+```
+
+**주의:** BSP에 따라 벡터 테이블 섹션 이름이 `.vectors`, `.vector_table` 등으로 다를 수 있음. 기존 lscript.ld에서 벡터용 섹션 이름을 확인한 뒤 위와 같이 BRAM 최앞에 두고, `.stack`은 반드시 그 뒤(0x40 이후)에 배치하면 된다.
+
 ### 3. 런타임 전제조건 (중요!)
 
 **main.c 실행 전에 반드시:**
@@ -114,7 +153,16 @@ MEMORY
 - ✅ `YOLO_LOG`가 `xil_printf`로 활성화됨 (에러 메시지 출력)
 - ✅ 각 단계별 로그 출력 (로딩, 추론, 결과)
 
-### 5. 추가 개선 (선택)
+### 5. 성능 최적화 (캐시·타일링·스택 BRAM)
+
+| 항목 | 상태 | 비고 |
+|------|------|------|
+| **D-Cache Enable** | ✅ 적용됨 | `main.c` 초입에서 `Xil_DCacheInvalidateRange` 후 `Xil_DCacheEnable()` 호출. 비활성화 시 DDR 왕복으로 대기 시간이 크게 늘어남. |
+| **Write-Back** | BSP 기본 | D-Cache 활성화 시 Xilinx BSP는 보통 Write-Back 사용. 별도 설정 불필요. |
+| **타일링 (Tiling)** | ✅ 적용됨 | `csrc/operations/conv2d.c`에서 출력 공간(oh, ow)을 8×8 타일로 나누어 연산. 캐시(예: 16KB)에 맞춰 데이터 재사용을 늘려 메모리 접근을 줄임. 타일 크기 변경: `-DCONV2D_TILE_H=4 -DCONV2D_TILE_W=4` 등. |
+| **스택 BRAM** | 선택 | 스택을 BRAM에 두면 함수 호출·지역 변수 접근이 빨라짐. 위 §2 "스택을 BRAM으로 복귀" 참고. 벡터 테이블을 BRAM 최앞(0x0), 스택을 0x40 이후에 두어야 함. |
+
+### 6. 추가 개선 (선택)
 
 **B. Platform Init 추가 (선택):**
 
@@ -146,7 +194,7 @@ BSP에 캐시 헤더가 없으면:
 #endif
 ```
 
-### 6. 실제 테스트 순서
+### 7. 실제 테스트 순서
 
 1. **Vitis 프로젝트 생성:**
    - MicroBlaze V 프로세서
@@ -172,7 +220,7 @@ BSP에 캐시 헤더가 없으면:
    - UART 모니터링 (115200 baud)
    - `DETECTIONS_OUT_BASE` 메모리 확인
 
-### 7. 예상 출력 (UART)
+### 8. 예상 출력 (UART)
 
 **성공 시:**
 ```
@@ -202,7 +250,7 @@ ERROR: Failed to load image from DDR
 ```
 (종료, return 1)
 
-### 8. 디버깅 팁
+### 9. 디버깅 팁
 
 **메모리 확인:**
 - `WEIGHTS_DDR_BASE`에 가중치가 있는지 확인
@@ -217,7 +265,7 @@ ERROR: Failed to load image from DDR
 - BSP에서 UART 초기화 확인
 - `xil_printf`가 실제로 출력되는지 테스트
 
-### 9. 결과를 detections.txt로 변환
+### 10. 결과를 detections.txt로 변환
 
 추론이 끝나면 **DDR `DETECTIONS_OUT_BASE`** 또는 **UART**로 검출 결과(1바이트 개수 + 12×N 바이트)가 나옵니다. 이를 `detections.txt`(및 시각화 `detections.jpg`)로 만들려면:
 
